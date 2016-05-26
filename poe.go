@@ -1,4 +1,4 @@
-  package poe
+package poe
 
   import (
 	"encoding/json"
@@ -9,6 +9,7 @@
 	"net/url"
 	"regexp"
 	"errors"
+  "time"
 )
 
 type Character struct {
@@ -48,16 +49,17 @@ type Stash struct {
 }
 
 type Poe struct {
-  accountName, email, password string
+  accountName, email, password, sessionId string
   client http.Client
   loggedIn bool
   loginHash string
 }
 
-func (P *Poe) Login (AccountName string, Email string, Password string) error {
+func (P *Poe) Login (AccountName string, Email string, Password string, SessionId string) error {
   P.accountName = AccountName
   P.email = Email
   P.password = Password
+  P.sessionId = SessionId
   P.loggedIn = false
 
 	jar, err := cookiejar.New(nil)
@@ -65,47 +67,58 @@ func (P *Poe) Login (AccountName string, Email string, Password string) error {
 		return err
 	}
 
-  // get login hash
-	P.client = http.Client{Jar: jar, CheckRedirect: nil}
-	resp, err := P.client.Get("https://www.pathofexile.com/login/")
-	if err != nil {
-		return err
-	}
+  if len(P.sessionId) > 0 {
+    url, _ := url.Parse("http://www.pathofexile.com")
+    expire := time.Now().AddDate(0, 0, 10)
+    s := fmt.Sprintf("POESESSID=%v", P.sessionId)
+    cookie := &http.Cookie{"POESESSID", P.sessionId, "/", "pathofexile.com", expire, expire.Format(time.UnixDate), 86400, true, true, s, []string{s}}
+    jar.SetCookies(url, []*http.Cookie{cookie})
+    P.client = http.Client{Jar: jar, CheckRedirect: nil}
+    P.loggedIn = true
+  } else {
+    // get login hash
+    P.client = http.Client{Jar: jar, CheckRedirect: nil}
+  	resp, err := P.client.Get("https://www.pathofexile.com/login/")
+  	if err != nil {
+  		return err
+  	}
 
-	data, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		return err
-	}
-	hashRegex, _ := regexp.Compile("name=\"hash\" value=\"(.*)\" ")
-	str := string(data[:])
-	hash := hashRegex.FindStringSubmatch(str)
-	if hash == nil {
-		return errors.New("error retrieving login hash")
-	}
-  P.loginHash = hash[1]
+  	data, err := ioutil.ReadAll(resp.Body)
+  	resp.Body.Close()
+  	if err != nil {
+  		return err
+  	}
+  	hashRegex, _ := regexp.Compile("name=\"hash\" value=\"(.*)\" ")
+  	str := string(data[:])
+  	hash := hashRegex.FindStringSubmatch(str)
+  	if hash == nil {
+  		return errors.New("error retrieving login hash")
+  	}
+    P.loginHash = hash[1]
 
-  // logging in
-	resp, err = P.client.PostForm("https://www.pathofexile.com/login/", url.Values{
-		"login_email":    {P.email},
-		"login_password": {P.password},
-		"login":          {"Login"},
-		"remember_me":    {"0"},
-		"hash":           {P.loginHash},
-	})
+    // logging in
+  	resp, err = P.client.PostForm("https://www.pathofexile.com/login/", url.Values{
+  		"login_email":    {P.email},
+  		"login_password": {P.password},
+  		"login":          {"Login"},
+  		"remember_me":    {"0"},
+  		"hash":           {P.loginHash},
+  	})
 
-	if err != nil {
-		return err
-	}
+  	if err != nil {
+  		return err
+  	}
 
-	data, err = ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	invalidLoginRegex, _ := regexp.Compile("Invalid Login")
-	if invalidLoginRegex.MatchString(string(data)) {
-		return errors.New("Invalid Login (email or password might be wrong)")
-	}
+  	data, err = ioutil.ReadAll(resp.Body)
+  	resp.Body.Close()
+  	invalidLoginRegex, _ := regexp.Compile("Invalid Login")
+  	if invalidLoginRegex.MatchString(string(data)) {
+  		return errors.New("Invalid Login (email or password might be wrong)")
+  	}
 
-  P.loggedIn = true
+    fmt.Println(jar)
+    P.loggedIn = true
+  }
   return nil
 }
 
